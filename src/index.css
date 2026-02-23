@@ -1,0 +1,22 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --surface: #0f0f0f;
+  --surface-muted: #1a1a1a;
+  --border: #2a2a2a;
+}
+
+@layer base {
+  html {
+    min-height: 100%;
+  }
+  body {
+    min-height: 100%;
+    @apply bg-[var(--surface)] text-gray-100 antialiased;
+  }
+  #root {
+    min-height: 100vh;
+  }
+}
