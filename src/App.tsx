@@ -1,39 +1,28 @@
-import { RuleForm } from '@/components/RuleForm'
-import { DueTimeline } from '@/components/DueTimeline'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { Layout } from '@/components/Layout'
+import { DashboardPage } from '@/app/dashboard/DashboardPage'
+import { CalendarPage } from '@/app/calendar/CalendarPage'
+import { AccountsPage } from '@/app/accounts/AccountsPage'
+import { BillsPage } from '@/app/bills/BillsPage'
 
-function Layout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen">
-      <header className="border-b border-[var(--border)] py-6">
-        <div className="mx-auto max-w-2xl px-4">
-          <h1 className="text-xl font-semibold tracking-tight text-white">
-            Dueflow
-          </h1>
-          <p className="mt-1 text-sm text-gray-400">
-            Due-date calculation
-          </p>
-        </div>
-      </header>
-      <main className="mx-auto max-w-2xl px-4 py-8">
-        {children}
-      </main>
-    </div>
-  )
-}
+const queryClient = new QueryClient()
 
 export default function App() {
   return (
-    <Layout>
-      <section className="mb-12">
-        <h2 className="mb-4 text-lg font-medium text-white">Rule form</h2>
-        <RuleForm />
-      </section>
-      <section>
-        <h2 className="mb-4 text-lg font-medium text-white">
-          Upcoming (next 6 months)
-        </h2>
-        <DueTimeline />
-      </section>
-    </Layout>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Layout>
+          <Routes>
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/calendar" element={<CalendarPage />} />
+            <Route path="/accounts" element={<AccountsPage />} />
+            <Route path="/bills" element={<BillsPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Layout>
+      </BrowserRouter>
+    </QueryClientProvider>
   )
 }
+
