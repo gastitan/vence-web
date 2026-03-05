@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { addMonths, format, parseISO, startOfMonth } from 'date-fns'
 import type { DueInstance } from '@/services/api'
+import { getDueInstanceAmount, getDueInstanceStatus } from '@/services/api'
 import { MarkPaidButton } from '@/components/MarkPaidButton'
 import { StatusBadge } from '@/components/StatusBadge'
 import { useDueBetween, useGroupedByDate, usePayDueInstance } from '@/hooks/useDueInstances'
@@ -108,7 +109,12 @@ export function CalendarPage() {
       ) : (
         <div className="space-y-3">
           {groups.map(([date, instances]) => {
-            const totalForDay = instances.reduce((sum, item) => sum + item.amount, 0)
+            const totalsByCurrency = instances.reduce<Record<string, number>>((acc, item) => {
+              const amount = getDueInstanceAmount(item)
+              const currency = item.bill.currency
+              acc[currency] = (acc[currency] ?? 0) + amount
+              return acc
+            }, {})
 
             return (
               <div
@@ -121,12 +127,15 @@ export function CalendarPage() {
                       {formatLongDate(date)}
                     </p>
                   </div>
-                  <p className="text-xs text-gray-300">
-                    Total:{' '}
-                    <span className="font-semibold text-white">
-                      {formatCurrency(totalForDay)}
-                    </span>
-                  </p>
+                  <div className="flex flex-wrap gap-x-3 gap-y-0 text-xs text-gray-300">
+                    {Object.entries(totalsByCurrency)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([currency, sum]) => (
+                        <span key={currency} className="font-semibold text-white">
+                          {formatCurrency(sum, currency)}
+                        </span>
+                      ))}
+                  </div>
                 </div>
                 <ul className="space-y-1.5">
                   {instances.map((item) => (
@@ -134,11 +143,11 @@ export function CalendarPage() {
                       key={item.id}
                       className="flex flex-wrap items-center gap-2 transition-all duration-200"
                     >
-                      <StatusBadge variant={getUrgencyVariant(item.dueDate, item.status)} />
-                      <span className="text-sm font-medium text-white">{item.billName}</span>
-                      <span className="text-xs text-gray-400">{item.accountName}</span>
+                      <StatusBadge variant={getUrgencyVariant(item.dueDate, getDueInstanceStatus(item))} />
+                      <span className="text-sm font-medium text-white">{item.bill.name}</span>
+                      <span className="text-xs text-gray-400">{item.bill.account.name}</span>
                       <span className="ml-auto text-sm font-semibold text-white">
-                        {formatCurrency(item.amount)}
+                        {formatCurrency(getDueInstanceAmount(item), item.bill.currency)}
                       </span>
                       <MarkPaidButton
                         instance={item}
