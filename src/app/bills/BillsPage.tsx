@@ -243,7 +243,7 @@ export function BillsPage() {
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-semibold text-white">
-                        {formatCurrency(bill.amount)}
+                        {formatCurrency(bill.amount, bill.currency)}
                       </span>
                       <button
                         type="button"

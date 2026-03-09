@@ -118,6 +118,7 @@ export interface Bill {
   accountId: AccountId
   accountName?: string
   amount: number
+  currency: BillCurrency
   rule?: ApiBillRule
   status?: DueStatus
 }
@@ -135,66 +136,96 @@ export interface CreateBillInput {
   rule: ApiBillRule
 }
 
+/** Account nested inside due-instance bill (from GET /due-instances). */
+export interface DueInstanceAccount {
+  id: string
+  name: string
+  type: string
+}
+
+/** Bill nested inside due-instance (from GET /due-instances). */
+export interface DueInstanceBill {
+  id: string
+  name: string
+  currency: 'ARS' | 'USD'
+  account: DueInstanceAccount
+}
+
 export interface DueInstance {
   id: DueInstanceId
-  billId: BillId
-  billName: string
-  accountId: AccountId
-  accountName: string
   dueDate: string
-  amount: number
-  status: DueStatus
+  estimatedAmount: number | null
+  confirmedAmount: number | null
+  status: string
+  bill: DueInstanceBill
 }
 
 /**
- * Raw shape returned by the backend for due instances.
- * We normalize this into the frontend-friendly `DueInstance` above.
+ * Raw shape that the backend may return (nested or flat).
+ * We normalize to DueInstance so the UI always receives a consistent shape.
  */
 interface RawDueInstance {
   id: DueInstanceId
-  billId: BillId
-  billName?: string | null
-  accountId?: AccountId
-  accountName?: string | null
   dueDate: string
-  amount?: number | null
   estimatedAmount?: number | null
   confirmedAmount?: number | null
   status?: string | null
-}
-
-function normalizeDueStatus(rawStatus: string | null | undefined): DueStatus {
-  const s = (rawStatus ?? '').toUpperCase()
-
-  if (s === 'PAID') return 'paid'
-  if (s === 'CONFIRMED') return 'confirmed'
-
-  // Treat any other non-paid status (e.g. PENDING) as estimated for UI purposes
-  return 'estimated'
+  /** Nested format (if backend sends it) */
+  bill?: DueInstanceBill | null
+  /** Flat format (legacy) */
+  billId?: string
+  billName?: string | null
+  accountId?: string
+  accountName?: string | null
+  amount?: number | null
+  currency: 'ARS' | 'USD'
 }
 
 function normalizeDueInstance(raw: RawDueInstance): DueInstance {
-  const amountFromRaw =
-    typeof raw.amount === 'number'
-      ? raw.amount
-      : typeof raw.confirmedAmount === 'number'
-        ? raw.confirmedAmount
-        : typeof raw.estimatedAmount === 'number'
-          ? raw.estimatedAmount
-          : 0
-
-  const safeAmount = Number.isFinite(amountFromRaw) ? amountFromRaw : 0
-
+  if (raw.bill && typeof raw.bill === 'object' && raw.bill.name && raw.bill.account) {
+    return {
+      id: raw.id,
+      dueDate: raw.dueDate,
+      estimatedAmount: raw.estimatedAmount ?? null,
+      confirmedAmount: raw.confirmedAmount ?? null,
+      status: raw.status ?? 'estimated',
+      bill: raw.bill,
+    }
+  }
   return {
     id: raw.id,
-    billId: raw.billId,
-    billName: raw.billName ?? 'Unknown bill',
-    accountId: raw.accountId ?? '',
-    accountName: raw.accountName ?? 'Unknown account',
     dueDate: raw.dueDate,
-    amount: safeAmount,
-    status: normalizeDueStatus(raw.status),
+    estimatedAmount: raw.estimatedAmount ?? (raw.amount ?? null),
+    confirmedAmount: raw.confirmedAmount ?? (raw.amount ?? null),
+    status: (raw.status ?? 'estimated').toString(),
+    bill: {
+      id: raw.billId ?? '',
+      name: raw.billName ?? 'Unknown bill',
+      currency: raw.currency,
+      account: {
+        id: raw.accountId ?? '',
+        name: raw.accountName ?? 'Unknown account',
+        type: 'OTHER',
+      },
+    },
   }
+}
+
+/** Display amount: confirmedAmount ?? estimatedAmount ?? 0 */
+export function getDueInstanceAmount(instance: DueInstance): number {
+  const n =
+    instance.confirmedAmount ?? instance.estimatedAmount ?? 0
+  return Number.isFinite(n) ? n : 0
+}
+
+/** Normalize backend status string for UI (e.g. StatusBadge, getUrgencyVariant). */
+export function getDueInstanceStatus(
+  instance: DueInstance
+): 'estimated' | 'confirmed' | 'paid' {
+  const s = (instance.status ?? '').toLowerCase()
+  if (s === 'paid') return 'paid'
+  if (s === 'confirmed') return 'confirmed'
+  return 'estimated'
 }
 
 export interface PayDueInstanceInput {
@@ -237,9 +268,9 @@ export function getDueBetween(from: string, to: string): Promise<DueInstance[]> 
 }
 
 export function payDueInstance(id: DueInstanceId, body: PayDueInstanceInput): Promise<DueInstance> {
-  return request<DueInstance>(`/due-instances/${encodeURIComponent(id)}/pay`, {
+  return request<RawDueInstance>(`/due-instances/${encodeURIComponent(id)}/pay`, {
     method: 'POST',
     body,
-  })
+  }).then(normalizeDueInstance)
 }
 

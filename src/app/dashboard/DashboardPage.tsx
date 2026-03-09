@@ -2,16 +2,25 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { addDays, endOfMonth, format, startOfMonth, startOfToday, subDays } from 'date-fns'
 import type { DueInstance } from '@/services/api'
-import { getDueBetween, getNextDue } from '@/services/api'
+import { getDueBetween, getDueInstanceAmount, getDueInstanceStatus, getNextDue } from '@/services/api'
 import { usePayDueInstance } from '@/hooks/useDueInstances'
 import { MarkPaidButton } from '@/components/MarkPaidButton'
 import { StatusBadge } from '@/components/StatusBadge'
 import { formatCurrency } from '@/utils/format'
 import { daysFromToday, getUrgencyVariant } from '@/utils/dates'
 
-function computeMonthlyTotals(now: Date, instances: DueInstance[] | undefined) {
+function computeMonthlyTotals(
+  now: Date,
+  instances: DueInstance[] | undefined
+): {
+  thisMonthPendingByCurrency: Record<string, number>
+  nextMonthEstimatedByCurrency: Record<string, number>
+} {
+  const thisMonthPendingByCurrency: Record<string, number> = {}
+  const nextMonthEstimatedByCurrency: Record<string, number> = {}
+
   if (!instances || instances.length === 0) {
-    return { thisMonthPending: 0, nextMonthEstimated: 0 }
+    return { thisMonthPendingByCurrency, nextMonthEstimatedByCurrency }
   }
 
   const startThisMonth = startOfMonth(now)
@@ -19,24 +28,26 @@ function computeMonthlyTotals(now: Date, instances: DueInstance[] | undefined) {
   const startNextMonth = startOfMonth(addDays(endThisMonth, 1))
   const endNextMonth = endOfMonth(startNextMonth)
 
-  let thisMonthPending = 0
-  let nextMonthEstimated = 0
-
   for (const item of instances) {
     const date = new Date(item.dueDate + 'T12:00:00')
+    const amount = getDueInstanceAmount(item)
+    const currency = item.bill.currency
+    const status = getDueInstanceStatus(item)
 
     if (date >= startThisMonth && date <= endThisMonth) {
-      if (item.status !== 'paid') {
-        thisMonthPending += item.amount
+      if (status !== 'paid') {
+        thisMonthPendingByCurrency[currency] =
+          (thisMonthPendingByCurrency[currency] ?? 0) + amount
       }
     } else if (date >= startNextMonth && date <= endNextMonth) {
-      if (item.status === 'estimated') {
-        nextMonthEstimated += item.amount
+      if (status === 'estimated') {
+        nextMonthEstimatedByCurrency[currency] =
+          (nextMonthEstimatedByCurrency[currency] ?? 0) + amount
       }
     }
   }
 
-  return { thisMonthPending, nextMonthEstimated }
+  return { thisMonthPendingByCurrency, nextMonthEstimatedByCurrency }
 }
 
 export function DashboardPage() {
@@ -108,8 +119,10 @@ export function DashboardPage() {
   }
 
   const nextDue = nextDueQuery.data
-  const dueTodayUnpaid = (todayQuery.data ?? []).filter((i) => i.status !== 'paid')
-  const overdueUnpaid = (overdueQuery.data ?? []).filter((i) => i.status !== 'paid').sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1))
+  const dueTodayUnpaid = (todayQuery.data ?? []).filter((i) => getDueInstanceStatus(i) !== 'paid')
+  const overdueUnpaid = (overdueQuery.data ?? [])
+    .filter((i) => getDueInstanceStatus(i) !== 'paid')
+    .sort((a, b) => (a.dueDate < b.dueDate ? -1 : 1))
   const todayViewEmpty = dueTodayUnpaid.length === 0 && overdueUnpaid.length === 0
 
   return (
@@ -136,11 +149,13 @@ export function DashboardPage() {
                       <StatusBadge variant="overdue" />
                     </div>
                     <p className="truncate font-medium text-white">
-                      {item.billName} <span className="text-xs font-normal text-gray-400">· {item.accountName}</span>
+                      {item.bill.name} <span className="text-xs font-normal text-gray-400">· {item.bill.account.name}</span>
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="text-sm font-semibold text-white">{formatCurrency(item.amount)}</span>
+                    <span className="text-sm font-semibold text-white">
+                      {formatCurrency(getDueInstanceAmount(item), item.bill.currency)}
+                    </span>
                     <MarkPaidButton instance={item} payingId={payingId} onMarkPaid={handleMarkPaid} />
                   </div>
                 </li>
@@ -156,11 +171,13 @@ export function DashboardPage() {
                       <StatusBadge variant="due-today" />
                     </div>
                     <p className="truncate font-medium text-white">
-                      {item.billName} <span className="text-xs font-normal text-gray-400">· {item.accountName}</span>
+                      {item.bill.name} <span className="text-xs font-normal text-gray-400">· {item.bill.account.name}</span>
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="text-sm font-semibold text-white">{formatCurrency(item.amount)}</span>
+                    <span className="text-sm font-semibold text-white">
+                      {formatCurrency(getDueInstanceAmount(item), item.bill.currency)}
+                    </span>
                     <MarkPaidButton instance={item} payingId={payingId} onMarkPaid={handleMarkPaid} />
                   </div>
                 </li>
@@ -182,21 +199,21 @@ export function DashboardPage() {
                   Upcoming bill
                 </p>
                 <h3 className="text-lg font-semibold text-white md:text-xl">
-                  {nextDue.billName}
+                  {nextDue.bill.name}
                 </h3>
                 <p className="text-sm text-gray-300">
-                  {nextDue.accountName} ·{' '}
+                  {nextDue.bill.account.name} ·{' '}
                   <span className="font-mono text-emerald-200">{nextDue.dueDate}</span>
                 </p>
                 <p className="text-sm text-gray-400">
-                  Status: <StatusBadge variant={getUrgencyVariant(nextDue.dueDate, nextDue.status)} />
+                  Status: <StatusBadge variant={getUrgencyVariant(nextDue.dueDate, getDueInstanceStatus(nextDue))} />
                 </p>
               </div>
               <div className="flex flex-col items-start gap-3 md:items-end">
                 <div className="text-right">
                   <p className="text-xs uppercase tracking-wide text-gray-400">Amount</p>
                   <p className="text-2xl font-semibold text-white">
-                    {formatCurrency(nextDue.amount)}
+                    {formatCurrency(getDueInstanceAmount(nextDue), nextDue.bill.currency)}
                   </p>
                 </div>
                 <MarkPaidButton instance={nextDue} payingId={payingId} onMarkPaid={handleMarkPaid} primary />
@@ -235,7 +252,7 @@ export function DashboardPage() {
               .sort((a, b) => (a.dueDate < b.dueDate ? -1 : a.dueDate > b.dueDate ? 1 : 0))
               .map((item) => {
                 const days = daysFromToday(item.dueDate)
-                const variant = getUrgencyVariant(item.dueDate, item.status)
+                const variant = getUrgencyVariant(item.dueDate, getDueInstanceStatus(item))
 
                 return (
                   <li
@@ -248,9 +265,9 @@ export function DashboardPage() {
                         <StatusBadge variant={variant} />
                       </div>
                       <p className="truncate font-medium text-white">
-                        {item.billName}{' '}
+                        {item.bill.name}{' '}
                         <span className="text-xs font-normal text-gray-400">
-                          · {item.accountName}
+                          · {item.bill.account.name}
                         </span>
                       </p>
                       <p className="text-xs text-gray-400">
@@ -265,7 +282,7 @@ export function DashboardPage() {
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-sm font-semibold text-white">
-                        {formatCurrency(item.amount)}
+                        {formatCurrency(getDueInstanceAmount(item), item.bill.currency)}
                       </span>
                       <MarkPaidButton instance={item} payingId={payingId} onMarkPaid={handleMarkPaid} />
                     </div>
@@ -282,18 +299,38 @@ export function DashboardPage() {
         </h2>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="rounded-xl border border-border bg-surface-muted px-4 py-4">
-            <p className="text-xs uppercase tracking-wide text-gray-400">Pending this month</p>
-            <p className="mt-2 text-2xl font-semibold text-white">
-              {formatCurrency(monthlyTotals.thisMonthPending)}
-            </p>
+            <p className="text-xs uppercase tracking-wide text-gray-400">Total este mes</p>
+            <div className="mt-2 space-y-1">
+              {Object.entries(monthlyTotals.thisMonthPendingByCurrency).length === 0 ? (
+                <p className="text-2xl font-semibold text-white">—</p>
+              ) : (
+                Object.entries(monthlyTotals.thisMonthPendingByCurrency)
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([currency, sum]) => (
+                    <p key={currency} className="text-2xl font-semibold text-white">
+                      {formatCurrency(sum, currency)}
+                    </p>
+                  ))
+              )}
+            </div>
           </div>
           <div className="rounded-xl border border-border bg-surface-muted px-4 py-4">
             <p className="text-xs uppercase tracking-wide text-gray-400">
               Estimated next month
             </p>
-            <p className="mt-2 text-2xl font-semibold text-white">
-              {formatCurrency(monthlyTotals.nextMonthEstimated)}
-            </p>
+            <div className="mt-2 space-y-1">
+              {Object.entries(monthlyTotals.nextMonthEstimatedByCurrency).length === 0 ? (
+                <p className="text-2xl font-semibold text-white">—</p>
+              ) : (
+                Object.entries(monthlyTotals.nextMonthEstimatedByCurrency)
+                  .sort(([a], [b]) => a.localeCompare(b))
+                  .map(([currency, sum]) => (
+                    <p key={currency} className="text-2xl font-semibold text-white">
+                      {formatCurrency(sum, currency)}
+                    </p>
+                  ))
+              )}
+            </div>
           </div>
         </div>
       </section>

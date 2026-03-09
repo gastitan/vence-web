@@ -1,4 +1,5 @@
 import type { DueInstance } from '@/services/api'
+import { getDueInstanceStatus } from '@/services/api'
 
 interface MarkPaidButtonProps {
   instance: DueInstance
@@ -15,7 +16,7 @@ export function MarkPaidButton({
   primary = false,
   label = 'Mark as paid',
 }: MarkPaidButtonProps) {
-  const isPaid = instance.status === 'paid'
+  const isPaid = getDueInstanceStatus(instance) === 'paid'
   const isPending = payingId === instance.id
   return (
     <button
