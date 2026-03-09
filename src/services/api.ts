@@ -118,6 +118,7 @@ export interface Bill {
   accountId: AccountId
   accountName?: string
   amount: number
+  currency: BillCurrency
   rule?: ApiBillRule
   status?: DueStatus
 }
@@ -157,6 +158,57 @@ export interface DueInstance {
   confirmedAmount: number | null
   status: string
   bill: DueInstanceBill
+}
+
+/**
+ * Raw shape that the backend may return (nested or flat).
+ * We normalize to DueInstance so the UI always receives a consistent shape.
+ */
+interface RawDueInstance {
+  id: DueInstanceId
+  dueDate: string
+  estimatedAmount?: number | null
+  confirmedAmount?: number | null
+  status?: string | null
+  /** Nested format (if backend sends it) */
+  bill?: DueInstanceBill | null
+  /** Flat format (legacy) */
+  billId?: string
+  billName?: string | null
+  accountId?: string
+  accountName?: string | null
+  amount?: number | null
+  currency: 'ARS' | 'USD'
+}
+
+function normalizeDueInstance(raw: RawDueInstance): DueInstance {
+  if (raw.bill && typeof raw.bill === 'object' && raw.bill.name && raw.bill.account) {
+    return {
+      id: raw.id,
+      dueDate: raw.dueDate,
+      estimatedAmount: raw.estimatedAmount ?? null,
+      confirmedAmount: raw.confirmedAmount ?? null,
+      status: raw.status ?? 'estimated',
+      bill: raw.bill,
+    }
+  }
+  return {
+    id: raw.id,
+    dueDate: raw.dueDate,
+    estimatedAmount: raw.estimatedAmount ?? (raw.amount ?? null),
+    confirmedAmount: raw.confirmedAmount ?? (raw.amount ?? null),
+    status: (raw.status ?? 'estimated').toString(),
+    bill: {
+      id: raw.billId ?? '',
+      name: raw.billName ?? 'Unknown bill',
+      currency: raw.currency,
+      account: {
+        id: raw.accountId ?? '',
+        name: raw.accountName ?? 'Unknown account',
+        type: 'OTHER',
+      },
+    },
+  }
 }
 
 /** Display amount: confirmedAmount ?? estimatedAmount ?? 0 */
@@ -203,18 +255,22 @@ export function deleteBill(id: BillId): Promise<void> {
 }
 
 export function getNextDue(): Promise<DueInstance | null> {
-  return request<DueInstance | null>('/due-instances/next', { method: 'GET' })
+  return request<RawDueInstance | null>('/due-instances/next', { method: 'GET' }).then((raw) =>
+    raw ? normalizeDueInstance(raw) : null
+  )
 }
 
 export function getDueBetween(from: string, to: string): Promise<DueInstance[]> {
   const params = new URLSearchParams({ from, to }).toString()
-  return request<DueInstance[]>(`/due-instances?${params}`, { method: 'GET' })
+  return request<RawDueInstance[]>(`/due-instances?${params}`, { method: 'GET' }).then((list) =>
+    list.map(normalizeDueInstance)
+  )
 }
 
 export function payDueInstance(id: DueInstanceId, body: PayDueInstanceInput): Promise<DueInstance> {
-  return request<DueInstance>(`/due-instances/${encodeURIComponent(id)}/pay`, {
+  return request<RawDueInstance>(`/due-instances/${encodeURIComponent(id)}/pay`, {
     method: 'POST',
     body,
-  })
+  }).then(normalizeDueInstance)
 }
 
