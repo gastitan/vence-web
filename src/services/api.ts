@@ -95,22 +95,17 @@ export interface CreateAccountInput {
 
 export type DueStatus = 'estimated' | 'confirmed' | 'paid'
 
-/** Backend RuleType enum value for fixed day-of-month rules */
-export const BILL_RULE_TYPE_FIXED_DAY = 'FIXED_DAY' as const
-export type BillRuleTypeFixedDay = typeof BILL_RULE_TYPE_FIXED_DAY
-
 export type ApiBillRule =
   | {
-      type: BillRuleTypeFixedDay
-      fixedDay: number
+      type: 'FIXED'
+      dayOfMonth: number
     }
-
-export function buildFixedDayRule(dayOfMonth: number): ApiBillRule {
-  return {
-    type: BILL_RULE_TYPE_FIXED_DAY,
-    fixedDay: dayOfMonth,
-  }
-}
+  | {
+      type: 'RANGE'
+      rangeStart: number
+      rangeEnd: number
+      offsetDays: number
+    }
 
 export interface Bill {
   id: BillId

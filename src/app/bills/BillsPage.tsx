@@ -1,16 +1,16 @@
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useMemo, useRef, useState } from 'react'
 import { StatusBadge } from '@/components/StatusBadge'
 import { useAccounts } from '@/hooks/useAccounts'
 import { useBills, useCreateBill, useDeleteBill } from '@/hooks/useBills'
-import {
-  BILL_RULE_TYPE_FIXED_DAY,
-  BILL_CURRENCIES,
-  CURRENCY_ARS,
-  buildFixedDayRule,
-  type BillCurrency,
-} from '@/services/api'
+import { BILL_CURRENCIES, CURRENCY_ARS, type BillCurrency } from '@/services/api'
 import { formatCurrency } from '@/utils/format'
 import type { UrgencyVariant } from '@/utils/dates'
+
+type RuleType = 'FIXED' | 'RANGE'
+
+function formatShortDate(date: Date): string {
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
 
 export function BillsPage() {
   const { data: accounts } = useAccounts()
@@ -25,8 +25,13 @@ export function BillsPage() {
   const [accountId, setAccountId] = useState('')
   const [amount, setAmount] = useState('')
   const [currency, setCurrency] = useState<BillCurrency>(CURRENCY_ARS)
+  const [ruleType, setRuleType] = useState<RuleType>('FIXED')
   const [dayOfMonth, setDayOfMonth] = useState('')
+  const [rangeStartDay, setRangeStartDay] = useState('')
+  const [rangeEndDay, setRangeEndDay] = useState('')
+  const [paymentOffsetDays, setPaymentOffsetDays] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const nameInputRef = useRef<HTMLInputElement>(null)
 
   const accountById = useMemo(() => {
     const map = new Map<string, string>()
@@ -64,24 +69,65 @@ export function BillsPage() {
       return
     }
 
-    const parsedDay = dayOfMonth.trim() ? Number(dayOfMonth) : NaN
-    if (!Number.isInteger(parsedDay) || parsedDay < 1 || parsedDay > 31) {
-      setError('Day of month is required (1–31).')
-      return
+    if (ruleType === 'FIXED') {
+      const parsedDay = dayOfMonth.trim() ? Number(dayOfMonth) : NaN
+      if (!Number.isInteger(parsedDay) || parsedDay < 1 || parsedDay > 31) {
+        setError('Day of month is required (1–31).')
+        return
+      }
+
+      await createBill({
+        name: trimmedName,
+        accountId,
+        amount: parsedAmount,
+        currency,
+        rule: {
+          type: 'FIXED',
+          dayOfMonth: parsedDay,
+        },
+      })
+    } else {
+      const parsedRangeStart = rangeStartDay.trim() ? Number(rangeStartDay) : NaN
+      const parsedRangeEnd = rangeEndDay.trim() ? Number(rangeEndDay) : NaN
+      const parsedOffsetDays = paymentOffsetDays.trim() ? Number(paymentOffsetDays) : NaN
+
+      // Both days must be 1–31. Cross-month ranges (e.g. 25–5) are valid.
+      if (!Number.isInteger(parsedRangeStart) || parsedRangeStart < 1 || parsedRangeStart > 31) {
+        setError('Range start day is required (1–31).')
+        return
+      }
+
+      if (!Number.isInteger(parsedRangeEnd) || parsedRangeEnd < 1 || parsedRangeEnd > 31) {
+        setError('Range end day is required (1–31).')
+        return
+      }
+
+      if (!Number.isFinite(parsedOffsetDays) || parsedOffsetDays < 0) {
+        setError('Payment offset days must be 0 or greater.')
+        return
+      }
+
+      await createBill({
+        name: trimmedName,
+        accountId,
+        amount: parsedAmount,
+        currency,
+        rule: {
+          type: 'RANGE',
+          rangeStart: parsedRangeStart,
+          rangeEnd: parsedRangeEnd,
+          offsetDays: parsedOffsetDays,
+        },
+      })
     }
 
-    await createBill({
-      name: trimmedName,
-      accountId,
-      amount: parsedAmount,
-      currency,
-      rule: buildFixedDayRule(parsedDay),
-    })
-
     setName('')
-    setAccountId('')
     setAmount('')
     setDayOfMonth('')
+    setRangeStartDay('')
+    setRangeEndDay('')
+    setPaymentOffsetDays('')
+    nameInputRef.current?.focus()
   }
 
   const handleDelete = async (id: string) => {
@@ -132,6 +178,7 @@ export function BillsPage() {
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-300">Name</label>
             <input
+              ref={nameInputRef}
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -181,18 +228,15 @@ export function BillsPage() {
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-300">
-              Day of month
-            </label>
-            <input
-              type="number"
-              min={1}
-              max={31}
-              value={dayOfMonth}
-              onChange={(e) => setDayOfMonth(e.target.value)}
-              placeholder="e.g. 15"
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
-            />
+            <label className="mb-1 block text-xs font-medium text-gray-300">Rule type</label>
+            <select
+              value={ruleType}
+              onChange={(e) => setRuleType(e.target.value as RuleType)}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-white focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+            >
+              <option value="FIXED">Fixed day</option>
+              <option value="RANGE">Closing range</option>
+            </select>
           </div>
           <div className="flex items-end">
             <button
@@ -202,6 +246,149 @@ export function BillsPage() {
             >
               Add bill
             </button>
+          </div>
+          <div className="sm:col-span-6 grid gap-3 sm:grid-cols-3">
+            {ruleType === 'FIXED' && (
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-300">
+                  Day of month
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={dayOfMonth}
+                  onChange={(e) => setDayOfMonth(e.target.value)}
+                  placeholder="1–31"
+                  className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+                />
+              </div>
+            )}
+
+            {ruleType === 'RANGE' && (
+              <>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-300">
+                    Range start day
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={rangeStartDay}
+                    onChange={(e) => setRangeStartDay(e.target.value)}
+                    placeholder="1–31"
+                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-300">
+                    Range end day
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={rangeEndDay}
+                    onChange={(e) => setRangeEndDay(e.target.value)}
+                    placeholder="1–31"
+                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-300">
+                    Payment offset days
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={paymentOffsetDays}
+                    onChange={(e) => setPaymentOffsetDays(e.target.value)}
+                    placeholder="e.g. 30"
+                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+                  />
+                </div>
+                <div className="sm:col-span-3 space-y-1">
+                  <p className="text-sm text-gray-500">
+                    {(() => {
+                      const start = rangeStartDay.trim() || '—'
+                      const end = rangeEndDay.trim() || '—'
+                      const offset = paymentOffsetDays.trim() ? `${paymentOffsetDays} days` : '—'
+                      const startNum = rangeStartDay.trim() ? Number(rangeStartDay) : null
+                      const endNum = rangeEndDay.trim() ? Number(rangeEndDay) : null
+                      const isCrossMonth =
+                        startNum !== null &&
+                        endNum !== null &&
+                        endNum < startNum
+                      return (
+                        <>
+                          {isCrossMonth ? (
+                            <>
+                              Closing days: {start} → end of month → {end}{' '}
+                              <span className="italic">(spans across months)</span>
+                              <br />
+                              Payment: {offset} after closing
+                            </>
+                          ) : (
+                            <>
+                              Closing days: {start}–{end}
+                              <br />
+                              Payment: {offset} after closing
+                            </>
+                          )}
+                        </>
+                      )
+                    })()}
+                  </p>
+                  {(() => {
+                    const startNum = rangeStartDay.trim() ? Number(rangeStartDay) : null
+                    const endNum = rangeEndDay.trim() ? Number(rangeEndDay) : null
+                    const offsetNum = paymentOffsetDays.trim() ? Number(paymentOffsetDays) : null
+                    const valid =
+                      startNum !== null &&
+                      endNum !== null &&
+                      offsetNum !== null &&
+                      Number.isInteger(startNum) &&
+                      startNum >= 1 &&
+                      startNum <= 31 &&
+                      Number.isInteger(endNum) &&
+                      endNum >= 1 &&
+                      endNum <= 31 &&
+                      Number.isFinite(offsetNum) &&
+                      offsetNum >= 0
+                    if (!valid) return null
+                    const now = new Date()
+                    const year = now.getFullYear()
+                    const month = now.getMonth()
+                    const isCrossMonth = endNum! < startNum!
+                    if (isCrossMonth) {
+                      const closingStart = new Date(year, month, startNum!)
+                      const closingEnd = new Date(year, month + 1, endNum!)
+                      const paymentDate = new Date(closingEnd)
+                      paymentDate.setDate(paymentDate.getDate() + offsetNum!)
+                      return (
+                        <p className="text-sm text-gray-500">
+                          Example cycle: {formatShortDate(closingStart)} → {formatShortDate(closingEnd)}
+                          <br />
+                          Payment around: {formatShortDate(paymentDate)}
+                        </p>
+                      )
+                    }
+                    const closingStart = new Date(year, month, startNum!)
+                    const closingEnd = new Date(year, month, endNum!)
+                    const paymentDate = new Date(closingEnd)
+                    paymentDate.setDate(paymentDate.getDate() + offsetNum!)
+                    return (
+                      <p className="text-sm text-gray-500">
+                        Example this month: Closing: {formatShortDate(closingStart)}–{formatShortDate(closingEnd)}
+                        <br />
+                        Payment around: {formatShortDate(paymentDate)}
+                      </p>
+                    )
+                  })()}
+                </div>
+              </>
+            )}
           </div>
         </form>
         {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
@@ -235,9 +422,13 @@ export function BillsPage() {
                       <p className="text-xs text-gray-400">
                         {bill.accountName ?? accountById.get(bill.accountId) ?? 'Unknown account'}
                       </p>
-                      {bill.rule?.type === BILL_RULE_TYPE_FIXED_DAY && (
+                      {bill.rule && (
                         <p className="text-xs text-gray-500">
-                          Day {bill.rule.fixedDay} each month
+                          {bill.rule.type === 'FIXED'
+                            ? `Day ${bill.rule.dayOfMonth} each month`
+                            : bill.rule.type === 'RANGE'
+                            ? `Closing days ${bill.rule.rangeStart}–${bill.rule.rangeEnd}, pays +${bill.rule.offsetDays} days`
+                            : null}
                         </p>
                       )}
                     </div>
